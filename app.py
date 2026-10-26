@@ -1,5 +1,6 @@
 from flask import Flask
-import os
+from bot import detect, format_msg, send_telegram
+import threading, time
 
 app = Flask(__name__)
 
@@ -9,25 +10,25 @@ def home():
 
 @app.route("/run")
 def run_now():
-    try:
-        from bot import detect, format_msg, send_telegram
-        sig = detect()
-        if sig:
-            send_telegram(format_msg(sig))
-            return f"{sig['break_type']} {sig['type']} envoye"
-        return "Pas de BREAK pour l instant - Bot OK"
-    except Exception as e:
-        return f"Erreur: {e}", 500
+    sig = detect()
+    if sig:
+        send_telegram(format_msg(sig))
+        return f"{sig['break_type']} {sig['type']} envoyé"
+    return "Pas de BREAK pour l instant - Bot OK"
 
-# La boucle tourne seulement si on n'est pas en train de builder
-if os.getenv("RENDER") != "1":
-    import threading, time
-    def loop():
-        while True:
-            try:
-                from bot import detect, format_msg, send_telegram
-                sig = detect()
-                if sig: send_telegram(format_msg(sig))
-            except: pass
-            time.sleep(60)
-    threading.Thread(target=loop, daemon=True).start()
+@app.route("/test")
+def test():
+    send_telegram("✅ Test Telegram OK - GoldBreak M5 Bot est bien connecté !")
+    return "Test envoyé - Va voir sur Telegram"
+
+def loop():
+    while True:
+        try:
+            sig = detect()
+            if sig:
+                send_telegram(format_msg(sig))
+        except Exception as e:
+            print(e)
+        time.sleep(60)
+
+threading.Thread(target=loop, daemon=True).start()
