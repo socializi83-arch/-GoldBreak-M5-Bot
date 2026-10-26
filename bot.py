@@ -12,7 +12,6 @@ def send_telegram(msg):
 
 def get_candles():
     try:
-        # XAUUSD=X = Spot comme FibAlgo sur ton image 20:21, plus GC=F qui avait 15min de retard
         df = yf.download("XAUUSD=X", period="5d", interval="5m", auto_adjust=True, progress=False)
         if df.empty: return []
         df = df.reset_index()
@@ -35,43 +34,79 @@ def detect():
     if len(candles) < 30: return None
     highs, lows = find_swings(candles)
     if not highs or not lows: return None
+    
     last_high_idx, last_high = highs[-1]
     last_low_idx, last_low = lows[-1]
     last = candles[-1]
+    prev = candles[-2] if len(candles) >= 2 else last
 
+    # CAS 1 : Dernier swing haut après bas = contexte baissier (comme ton image 20:44 Low Break)
     if last_high_idx > last_low_idx:
         swing_high = last_high
         swing_low = candles[last_low_idx]["low"]
+        diff = swing_high - swing_low
+        zone_bottom = swing_low + diff * 0.618
+        zone_top = swing_low + diff * 0.786
+        
+        # BREAK SELL : cassure du low
         if last["close"] < swing_low:
-            diff = swing_high - swing_low
-            zone_bottom = swing_low + diff * 0.618
-            zone_top = swing_low + diff * 0.786
             entry = (zone_top + zone_bottom)/2
             sl = zone_top + 0.8
             tp1 = entry - (sl - entry)
-            tp2 = entry - (sl - entry)*2
-            return {"type":"BUY", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+            tp2 = entry - (sl - entry)*4
+            return {"type":"SELL", "signal":"BREAK", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+        
+        # ENTRY SELL : prix revient tester la Sell Zone (comme ton image 21:29 à 4013.265)
+        if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
+            entry = last["close"]
+            sl = zone_top + 0.8
+            tp1 = entry - (sl - entry)
+            tp2 = entry - (sl - entry)*4
+            return {"type":"SELL", "signal":"ENTRY", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+
+    # CAS 2 : Dernier swing bas après haut = contexte haussier = BUY
     else:
         swing_low = last_low
         swing_high = candles[last_high_idx]["high"]
+        diff = swing_high - swing_low
+        zone_bottom = swing_high - diff * 0.786
+        zone_top = swing_high - diff * 0.618
+        
         if last["close"] > swing_high:
-            diff = swing_high - swing_low
-            zone_bottom = swing_high - diff * 0.786
-            zone_top = swing_high - diff * 0.618
             entry = (zone_top + zone_bottom)/2
             sl = zone_bottom - 0.8
             tp1 = entry + (entry - sl)
-            tp2 = entry + (entry - sl)*2
-            return {"type":"SELL", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+            tp2 = entry + (entry - sl)*4
+            return {"type":"BUY", "signal":"BREAK", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+        
+        if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
+            entry = last["close"]
+            sl = zone_bottom - 0.8
+            tp1 = entry + (entry - sl)
+            tp2 = entry + (entry - sl)*4
+            return {"type":"BUY", "signal":"ENTRY", "price":last["close"], "zone_bottom":zone_bottom, "zone_top":zone_top, "entry":entry, "sl":sl, "tp1":tp1, "tp2":tp2}
+    
     return None
 
 def format_msg(s):
-    emoji = "🟢" if s["type"]=="BUY" else "🔴"
-    return f"""{emoji} *GOLD {s['type']} - M5 | FIBALGO SPOT*
+    if s["signal"] == "BREAK":
+        emoji = "🔴" if s["type"]=="SELL" else "🟢"
+        return f"""{emoji} *GOLD {s['type']} - M5 | {s['signal']} - FIBALGO*
 
 *Break:* {s['price']:.2f}
-*Golden Zone 0.618-0.786:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Zone 0.618-0.786:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Entry prévue:* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1 (1:1):* {s['tp1']:.2f}
+*TP2 (1:4):* {s['tp2']:.2f}"""
+    else:
+        emoji = "🎯"
+        return f"""{emoji} *ENTRY - GOLD {s['type']} - M5*
+
+*Prix entre dans Zone:* {s['price']:.2f}
+*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
 *SL:* {s['sl']:.2f}
-*TP1:* {s['tp1']:.2f}
-*TP2:* {s['tp2']:.2f}"""
+*TP1 (1:1):* {s['tp1']:.2f}
+*TP2 (1:4):* {s['tp2']:.2f}
+*R:R:* 1:4"""
