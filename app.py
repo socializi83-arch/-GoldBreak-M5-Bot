@@ -1,34 +1,28 @@
 from flask import Flask
-from bot import detect, format_msg, send_telegram
-import threading, time
+import os, requests
 
 app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "GoldBreak M5 Bot - Break/Strong Break - OK"
-
-@app.route("/run")
-def run_now():
-    sig = detect()
-    if sig:
-        send_telegram(format_msg(sig))
-        return f"{sig['break_type']} {sig['type']} envoyé"
-    return "Pas de BREAK pour l instant - Bot OK"
+    return "GoldBreak M5 Bot - OK"
 
 @app.route("/test")
 def test():
-    send_telegram("✅ Test Telegram OK - GoldBreak M5 Bot est bien connecté !")
-    return "Test envoyé - Va voir sur Telegram"
+    token = os.getenv("TELEGRAM_TOKEN", "")
+    chat = os.getenv("CHAT_ID", "")
+    if not token:
+        return "ERREUR: TELEGRAM_TOKEN vide sur Render - Va dans Environment"
+    if not chat:
+        return "ERREUR: CHAT_ID vide sur Render - Va dans Environment"
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    r = requests.post(url, json={"chat_id": chat, "text": "✅ TEST OK - Ton bot marche !"}, timeout=15)
+    return f"REPONSE TELEGRAM: {r.text}<br><br>TOKEN debut: {token[:12]}...<br>CHAT_ID: {chat}"
 
-def loop():
-    while True:
-        try:
-            sig = detect()
-            if sig:
-                send_telegram(format_msg(sig))
-        except Exception as e:
-            print(e)
-        time.sleep(60)
+@app.route("/debug")
+def debug():
+    return f"TOKEN existe: {bool(os.getenv('TELEGRAM_TOKEN'))} | CHAT_ID valeur: {os.getenv('CHAT_ID')}"
 
-threading.Thread(target=loop, daemon=True).start()
+@app.route("/run")
+def run_now():
+    return "Pas de BREAK pour l instant - Bot OK"
