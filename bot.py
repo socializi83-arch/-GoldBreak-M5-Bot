@@ -59,16 +59,19 @@ def detect():
         if len(candles) < 20: return None
         highs, lows = find_swings(candles)
         if not highs or not lows: return None
-        last_high_idx, last_high = highs[-1]
-        last_low_idx, last_low = lows[-1]
+        
         last = candles[-1]
         prev = candles[-2]
-
-        if last_high_idx > last_low_idx:
-            swing_high = last_high
-            swing_low = candles[last_low_idx]["low"]
-            diff = swing_high - swing_low
-            if diff <= 0: return None
+        
+        # On check les 2 zones en même temps comme FibAlgo qui montre Sell Zone 4010 et Buy Zone 4002 sur ton image 07:25
+        # 1. Check SELL (dernier high après low)
+        last_high_idx, last_high = highs[-1]
+        last_low_idx, last_low = lows[-1]
+        # SELL zone
+        swing_high = last_high
+        swing_low = candles[last_low_idx]["low"]
+        diff = swing_high - swing_low
+        if diff > 0:
             zone_bottom = swing_low + diff*0.618
             zone_top = swing_low + diff*0.786
             if last["close"] < swing_low:
@@ -83,23 +86,58 @@ def detect():
                 tp1 = entry - (sl - entry)
                 tp2 = entry - (sl - entry)*4
                 return {"type":"SELL","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        else:
-            swing_low = last_low
-            swing_high = candles[last_high_idx]["high"]
-            diff = swing_high - swing_low
-            if diff <= 0: return None
-            zone_bottom = swing_high - diff*0.786
-            zone_top = swing_high - diff*0.618
-            if last["close"] > swing_high:
-                entry = (zone_top+zone_bottom)/2
-                sl = zone_bottom - 1.0
-                tp1 = entry + (entry - sl)
-                tp2 = entry + (entry - sl)*4
-                return {"type":"BUY","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-            if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
-                entry = last["close"]
-                sl = zone_bottom - 1.0
-                tp1 = entry + (entry - sl)
-                tp2 = entry + (entry - sl)*4
-                return {"type":"BUY","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        
+        # 2. Check BUY (dernier low après high) - c'est ton Buy Zone 4002 à 07:25
+        swing_low2 = lows[-1][1]
+        swing_high2 = candles[highs[-1][0]]["high"] if highs else last_high
+        # Prend le dernier low qui est vraiment le plus bas récent (ton 4000 sur image 07:25)
+        recent_lows = [l for l in lows if l[0] >= len(candles)-20]
+        if recent_lows:
+            swing_low2 = min([l[1] for l in recent_lows])
+            swing_high2 = max([candles[h[0]]["high"] for h in highs if h[0] >= len(candles)-20]) if highs else swing_high
+            
+            diff2 = swing_high2 - swing_low2
+            if diff2 > 0:
+                zone_bottom2 = swing_high2 - diff2*0.786
+                zone_top2 = swing_high2 - diff2*0.618
+                if last["close"] > swing_high2:
+                    entry = (zone_top2+zone_bottom2)/2
+                    sl = zone_bottom2 - 1.0
+                    tp1 = entry + (entry - sl)
+                    tp2 = entry + (entry - sl)*4
+                    return {"type":"BUY","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom2,"zone_top":zone_top2,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+                if zone_bottom2 <= last["close"] <= zone_top2 and not (zone_bottom2 <= prev["close"] <= zone_top2):
+                    entry = last["close"]
+                    sl = zone_bottom2 - 1.0
+                    tp1 = entry + (entry - sl)
+                    tp2 = entry + (entry - sl)*4
+                    return {"type":"BUY","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom2,"zone_top":zone_top2,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+                
     except: return None
+    return None
+
+def format_msg(s):
+    from datetime import datetime, timedelta
+    expire = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
+    limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
+    emoji="🔴" if s["type"]=="SELL" else "🟢"
+    if s["signal"]=="BREAK":
+        return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
+
+*Break:* {s['price']:.2f}
+*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Entry ({limit_type}):* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1 (1:1):* {s['tp1']:.2f}
+*TP2 (1:4):* {s['tp2']:.2f}
+*Valide:* {expire}"""
+    else:
+        return f"""🎯 *ENTRY - GOLD {s['type']} - {limit_type}*
+
+*Prix:* {s['price']:.2f}
+*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Entry:* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1:* {s['tp1']:.2f}
+*TP2:* {s['tp2']:.2f}
+*Valide:* {expire}"""
