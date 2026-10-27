@@ -5,21 +5,31 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    try: return "GoldBreak M5 - FibAlgo BREAK+ENTRY - OK"
-    except: return "OK", 200
+    return "GoldBreak M5 - DEBUG - OK"
 
 @app.route("/test")
 def test():
     try:
         token = os.getenv("TELEGRAM_TOKEN","")
         chat = os.getenv("CHAT_ID","") or os.getenv("TELEGRAM_CHAT_ID","")
-        if not token: return "TELEGRAM_TOKEN vide"
-        if not chat: return "CHAT_ID vide"
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        r = requests.post(url, json={"chat_id":chat,"text":"✅ TEST OK - Final Fix marche !"}, timeout=15)
-        return f"REPONSE TELEGRAM: {r.text}"
+        r = requests.post(url, json={"chat_id":chat,"text":"✅ TEST DEBUG OK"}, timeout=15)
+        return f"TELEGRAM: {r.text}"
     except Exception as e:
-        return f"ERREUR TEST: {e}<br>{traceback.format_exc()}", 500
+        return f"ERREUR: {e}", 500
+
+@app.route("/debug")
+def debug():
+    try:
+        from bot import get_candles, find_swings
+        candles = get_candles()
+        if not candles:
+            return "DEBUG: get_candles() vide - yfinance ne renvoie rien (marché fermé ou bug)"
+        highs, lows = find_swings(candles)
+        last = candles[-1]
+        return f"DEBUG: candles={len(candles)} last={last['close']:.2f} highs={len(highs)} lows={len(lows)} last_high_idx={highs[-1][0] if highs else 'none'} last_low_idx={lows[-1][0] if lows else 'none'}"
+    except Exception as e:
+        return f"DEBUG ERREUR: {e} {traceback.format_exc()}", 500
 
 @app.route("/run")
 def run_now():
@@ -28,10 +38,10 @@ def run_now():
         sig = detect()
         if sig:
             send_telegram(format_msg(sig))
-            return f"Signal {sig['signal']} {sig['type']} envoye"
-        return "Pas de signal - Bot OK"
+            return f"SIGNAL {sig['signal']} {sig['type']} {sig['price']:.2f} ENVOYE"
+        return "Pas de signal - voir /debug pour la raison"
     except Exception as e:
-        return f"Erreur run: {e}", 200
+        return f"Erreur run: {e} {traceback.format_exc()}", 500
 
 def loop():
     while True:
