@@ -6,6 +6,7 @@ CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
 
 _last_signal_time = 0
 _last_zone = ""
+_last_type = ""
 
 def send_telegram(msg):
     try:
@@ -53,13 +54,8 @@ def find_swings(candles):
     return highs, lows
 
 def detect():
-    global _last_signal_time, _last_zone
+    global _last_signal_time, _last_zone, _last_type
     try:
-        # ANTI-SPAM: 1 signal max toutes les 15 minutes
-        now = time.time()
-        if now - _last_signal_time < 900:  # 900 sec = 15 min
-            return None
-
         candles = get_candles()
         highs, lows = find_swings(candles)
         price = get_real_spot()
@@ -72,30 +68,45 @@ def detect():
         zone_bottom_buy = swing_high - diff*0.786
         zone_top_buy = swing_high - diff*0.618
 
-        # ANTI-SPAM: ne pas renvoyer la même zone
-        zone_id = f"{zone_bottom_buy:.0f}-{zone_top_buy:.0f}"
-        if zone_id == _last_zone:
-            return None
+        now = time.time()
+        signal = None
 
         if zone_bottom_sell <= price <= zone_top_sell:
             entry = price
             sl = zone_top_sell + 1.2
             tp1 = entry - (sl - entry)
             tp2 = entry - (sl - entry)*2.5
-            _last_signal_time = now
-            _last_zone = zone_id
-            return {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        if zone_bottom_buy <= price <= zone_top_buy:
+            signal = {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        elif zone_bottom_buy <= price <= zone_top_buy:
             entry = price
             sl = zone_bottom_buy - 1.2
             tp1 = entry + (entry - sl)
             tp2 = entry + (entry - sl)*2.5
-            _last_signal_time = now
-            _last_zone = zone_id
-            return {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+            signal = {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        else:
+            return None
 
-        # Pas de BREAK forcé qui spam comme à 17:36-17:53
-        return None
+        if not signal:
+            return None
+
+        zone_id = f"{signal['zone_bottom']:.1f}-{signal['zone_top']:.1f}"
+        
+        # MEILLEUR FILTRE:
+        # 1. Bloque doublon même zone + même type pendant 5 min (évite 17:40 et 17:42 même 4060.54-4061.05)
+        if zone_id == _last_zone and signal["type"] == _last_type:
+            if now - _last_signal_time < 300:  # 5 min
+                return None
+        
+        # 2. Bloque tout spam à moins de 60 sec (évite 15 BUY entre 17:36-17:53)
+        if now - _last_signal_time < 60:
+            return None
+
+        # Si nouvelle zone ou sens opposé (BUY puis SELL), on laisse passer direct
+        _last_signal_time = now
+        _last_zone = zone_id
+        _last_type = signal["type"]
+        return signal
+
     except: return None
 
 def format_msg(s):
