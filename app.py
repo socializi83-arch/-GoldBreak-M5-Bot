@@ -8,29 +8,20 @@ def home():
 @app.route("/debug")
 def debug():
     try:
-        import requests, os, traceback, sys
-        # Test 1: Vrai Spot direct sans passer par bot.py
+        import requests
+        import bot
+        price_direct = 0
         try:
             r = requests.get("https://api.gold-api.com/price/XAU", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
-            price = r.json().get("price", 0)
-        except Exception as e1:
-            price = f"gold-api error {e1}"
-
-        # Test 2: Essaie d'importer bot.py
-        try:
-            import bot
-            candles = bot.get_candles()
-            real = bot.get_real_spot()
-            highs, lows = bot.find_swings(candles)
-            info_bot = f"bot.py OK candles={len(candles)} real={real} highs={len(highs)} lows={len(lows)}"
-        except Exception as e2:
-            import traceback
-            info_bot = f"bot.py CRASH: {e2}<br><pre>{traceback.format_exc()}</pre>"
-
-        return f"DEBUG LIVE: price_direct={price}<br>{info_bot}", 200
+            price_direct = r.json().get("price", 0)
+        except: price_direct = 0
+        candles = bot.get_candles()
+        real = bot.get_real_spot()
+        highs, lows = bot.find_swings(candles)
+        return f"DEBUG LIVE: price_direct={price_direct} bot.py OK candles={len(candles)} real={real} highs={len(highs)} lows={len(lows)}", 200
     except Exception as e:
         import traceback
-        return f"CRASH GLOBAL: {e}<br><pre>{traceback.format_exc()}</pre>", 200
+        return f"DEBUG CRASH: {e}<br><pre>{traceback.format_exc()}</pre>", 200
 
 @app.route("/test")
 def test():
@@ -53,9 +44,21 @@ def run_now():
         if sig:
             bot.send_telegram(bot.format_msg(sig))
             return f"SIGNAL {sig['type']} {sig['price']:.2f} ENVOYE", 200
-        return "Pas de signal mais BOT OK - prix hors zone comme 4004.990", 200
+        return "Pas de signal mais BOT OK", 200
     except Exception as e:
         import traceback
         return f"RUN CRASH: {e}<br>{traceback.format_exc()}", 200
 
-# Plus de thread au démarrage - c'est le thread qui te faisait Internal Server Error à 12:21 et 12:31
+def loop():
+    while True:
+        try:
+            import bot, time
+            sig = bot.detect()
+            if sig: bot.send_telegram(bot.format_msg(sig))
+            time.sleep(60)
+        except:
+            import time
+            time.sleep(60)
+
+import threading
+threading.Timer(10.0, lambda: threading.Thread(target=loop, daemon=True).start()).start()
