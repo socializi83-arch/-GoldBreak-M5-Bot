@@ -39,7 +39,6 @@ def get_real_spot():
 def get_candles_real():
     global _cached_candles, _cached_time
     now = time.time()
-    # Cache 5 min pour éviter Internal Server Error à 12:31
     if _cached_candles and now - _cached_time < 300:
         return _cached_candles
     if yf:
@@ -54,7 +53,6 @@ def get_candles_real():
                     _cached_time = now
                     return candles
             except: continue
-    # Fallback si yfinance vide comme à 08:57 - évite get_candles() vide
     real = get_real_spot()
     if real:
         candles = [{"open":real, "high":real+1.5, "low":real-1.5, "close":real} for _ in range(20)]
@@ -73,7 +71,6 @@ def find_swings(candles):
                 highs.append((i, h))
             if l < candles[i-1]["low"] and l < candles[i+1]["low"]:
                 lows.append((i, l))
-        # Anti high=0 lows=0 à 12:09
         if not highs:
             max_c = max(candles, key=lambda x: x["high"])
             highs.append((candles.index(max_c), max_c["high"]))
@@ -95,7 +92,7 @@ def detect():
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
-        if diff < 3: return None  # Pas de zone intéressante
+        if diff < 3: return None
         zone_bottom_sell = swing_low + diff*0.618
         zone_top_sell = swing_low + diff*0.786
         zone_bottom_buy = swing_high - diff*0.786
@@ -121,12 +118,9 @@ def detect():
         if not signal: return None
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
         
-        # NE RATE RIEN: bloque seulement même zone + même type 3 min (évite doublon 17:40-17:42 qui t'a fait -56.10)
-        # Mais laisse passer nouvelle zone comme 4057.115 à 18:59 ou sens opposé direct
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
                 return None
-        # Anti-spam global 45 sec (évite 15 BUY entre 17:36-17:53)
         if now - _last_signal_time < 45:
             return None
 
@@ -137,12 +131,22 @@ def detect():
     except: return None
 
 def format_msg(s):
-    expire = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
+    expire = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M")
+    real_now = get_real_spot()
+    if real_now is None:
+        real_now = s["price"]
+    
+    # Fix 19:44: Si BUY LIMIT 4056.30 au dessus de 4054.85 actuel, on passe en BUY STOP plaçable
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
+    if s["type"]=="BUY" and s["entry"] > real_now + 0.3:
+        limit_type = "BUY STOP"
+    if s["type"]=="SELL" and s["entry"] < real_now - 0.3:
+        limit_type = "SELL STOP"
+
     emoji="🔴" if s["type"]=="SELL" else "🟢"
     return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
 
-*Prix Réel Spot:* {s['price']:.2f}
+*Prix Réel Spot:* {s['price']:.2f} (actuel {real_now:.2f})
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
 *SL:* {s['sl']:.2f}
