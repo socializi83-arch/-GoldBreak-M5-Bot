@@ -1,5 +1,9 @@
 import os, requests, time
 from datetime import datetime, timedelta
+try:
+    import yfinance as yf
+except:
+    yf = None
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
@@ -7,6 +11,8 @@ CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
 _last_signal_time = 0
 _last_zone = ""
 _last_type = ""
+_cached_candles = []
+_cached_time = 0
 
 def send_telegram(msg):
     try:
@@ -28,11 +34,34 @@ def get_real_spot():
                     if item.get("metal")=="XAU":
                         return float(item.get("price",0))
         except: continue
-    return 4000.0
+    return None
 
-def get_candles():
+def get_candles_real():
+    global _cached_candles, _cached_time
+    now = time.time()
+    # Cache 5 min pour éviter Internal Server Error à 12:31
+    if _cached_candles and now - _cached_time < 300:
+        return _cached_candles
+    if yf:
+        for sym in ["XAUUSD=X", "GC=F"]:
+            try:
+                df = yf.download(sym, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
+                if df is None or df.empty or len(df) < 20: continue
+                df = df.reset_index()
+                candles = [{"open":float(r["Open"]), "high":float(r["High"]), "low":float(r["Low"]), "close":float(r["Close"])} for _, r in df.iterrows()]
+                if len(candles) >= 20:
+                    _cached_candles = candles
+                    _cached_time = now
+                    return candles
+            except: continue
+    # Fallback si yfinance vide comme à 08:57 - évite get_candles() vide
     real = get_real_spot()
-    return [{"open":real, "high":real+1.5, "low":real-1.5, "close":real} for _ in range(20)]
+    if real:
+        candles = [{"open":real, "high":real+1.5, "low":real-1.5, "close":real} for _ in range(20)]
+        _cached_candles = candles
+        _cached_time = now
+        return candles
+    return _cached_candles if _cached_candles else []
 
 def find_swings(candles):
     highs, lows = [], []
@@ -44,6 +73,7 @@ def find_swings(candles):
                 highs.append((i, h))
             if l < candles[i-1]["low"] and l < candles[i+1]["low"]:
                 lows.append((i, l))
+        # Anti high=0 lows=0 à 12:09
         if not highs:
             max_c = max(candles, key=lambda x: x["high"])
             highs.append((candles.index(max_c), max_c["high"]))
@@ -56,13 +86,16 @@ def find_swings(candles):
 def detect():
     global _last_signal_time, _last_zone, _last_type
     try:
-        candles = get_candles()
+        candles = get_candles_real()
+        if len(candles) < 10: return None
         highs, lows = find_swings(candles)
-        price = get_real_spot()
+        real_spot = get_real_spot()
+        if not real_spot: return None
+        price = real_spot
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
-        if diff < 2: diff = 3
+        if diff < 3: return None  # Pas de zone intéressante
         zone_bottom_sell = swing_low + diff*0.618
         zone_top_sell = swing_low + diff*0.786
         zone_bottom_buy = swing_high - diff*0.786
@@ -70,7 +103,6 @@ def detect():
 
         now = time.time()
         signal = None
-
         if zone_bottom_sell <= price <= zone_top_sell:
             entry = price
             sl = zone_top_sell + 1.2
@@ -86,27 +118,22 @@ def detect():
         else:
             return None
 
-        if not signal:
-            return None
-
-        zone_id = f"{signal['zone_bottom']:.1f}-{signal['zone_top']:.1f}"
+        if not signal: return None
+        zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
         
-        # MEILLEUR FILTRE:
-        # 1. Bloque doublon même zone + même type pendant 5 min (évite 17:40 et 17:42 même 4060.54-4061.05)
+        # NE RATE RIEN: bloque seulement même zone + même type 3 min (évite doublon 17:40-17:42 qui t'a fait -56.10)
+        # Mais laisse passer nouvelle zone comme 4057.115 à 18:59 ou sens opposé direct
         if zone_id == _last_zone and signal["type"] == _last_type:
-            if now - _last_signal_time < 300:  # 5 min
+            if now - _last_signal_time < 180:
                 return None
-        
-        # 2. Bloque tout spam à moins de 60 sec (évite 15 BUY entre 17:36-17:53)
-        if now - _last_signal_time < 60:
+        # Anti-spam global 45 sec (évite 15 BUY entre 17:36-17:53)
+        if now - _last_signal_time < 45:
             return None
 
-        # Si nouvelle zone ou sens opposé (BUY puis SELL), on laisse passer direct
         _last_signal_time = now
         _last_zone = zone_id
         _last_type = signal["type"]
         return signal
-
     except: return None
 
 def format_msg(s):
