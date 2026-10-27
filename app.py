@@ -15,7 +15,7 @@ def debug():
             r = requests.get("https://api.gold-api.com/price/XAU", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
             price_direct = r.json().get("price", 0)
         except: price_direct = 0
-        candles = bot.get_candles()
+        candles = bot.get_candles_real()
         real = bot.get_real_spot()
         highs, lows = bot.find_swings(candles)
         return f"DEBUG LIVE: price_direct={price_direct} bot.py OK candles={len(candles)} real={real} highs={len(highs)} lows={len(lows)}", 200
