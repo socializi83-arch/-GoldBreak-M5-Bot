@@ -43,12 +43,13 @@ def get_candles():
 def find_swings(candles):
     highs, lows = [], []
     try:
-        for i in range(2, len(candles)-2):
+        # 1 bougie = comme FibAlgo temps réel, plus de décalage 14$ comme à 07:46
+        for i in range(1, len(candles)-1):
             h = candles[i]["high"]
             l = candles[i]["low"]
-            if all(h >= candles[j]["high"] for j in range(i-2, i)) and all(h >= candles[j]["high"] for j in range(i+1, i+3)):
+            if h > candles[i-1]["high"] and h > candles[i+1]["high"]:
                 highs.append((i, h))
-            if all(l <= candles[j]["low"] for j in range(i-2, i)) and all(l <= candles[j]["low"] for j in range(i+1, i+3)):
+            if l < candles[i-1]["low"] and l < candles[i+1]["low"]:
                 lows.append((i, l))
     except: pass
     return highs, lows
@@ -63,11 +64,10 @@ def detect():
         last = candles[-1]
         prev = candles[-2]
         
-        # On check les 2 zones en même temps comme FibAlgo qui montre Sell Zone 4010 et Buy Zone 4002 sur ton image 07:25
-        # 1. Check SELL (dernier high après low)
+        # On check les 2 côtés en même temps comme FibAlgo qui montre Sell Zone 4010 et Buy Zone 4002 à 07:46
+        # 1. SELL
         last_high_idx, last_high = highs[-1]
         last_low_idx, last_low = lows[-1]
-        # SELL zone
         swing_high = last_high
         swing_low = candles[last_low_idx]["low"]
         diff = swing_high - swing_low
@@ -87,15 +87,12 @@ def detect():
                 tp2 = entry - (sl - entry)*4
                 return {"type":"SELL","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         
-        # 2. Check BUY (dernier low après high) - c'est ton Buy Zone 4002 à 07:25
-        swing_low2 = lows[-1][1]
-        swing_high2 = candles[highs[-1][0]]["high"] if highs else last_high
-        # Prend le dernier low qui est vraiment le plus bas récent (ton 4000 sur image 07:25)
+        # 2. BUY - ton Buy Zone 4002 à 07:46 avec prix 4000.030
         recent_lows = [l for l in lows if l[0] >= len(candles)-20]
-        if recent_lows:
+        recent_highs = [h for h in highs if h[0] >= len(candles)-20]
+        if recent_lows and recent_highs:
             swing_low2 = min([l[1] for l in recent_lows])
-            swing_high2 = max([candles[h[0]]["high"] for h in highs if h[0] >= len(candles)-20]) if highs else swing_high
-            
+            swing_high2 = max([candles[h[0]]["high"] for h in recent_highs])
             diff2 = swing_high2 - swing_low2
             if diff2 > 0:
                 zone_bottom2 = swing_high2 - diff2*0.786
@@ -117,7 +114,6 @@ def detect():
     return None
 
 def format_msg(s):
-    from datetime import datetime, timedelta
     expire = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
     emoji="🔴" if s["type"]=="SELL" else "🟢"
