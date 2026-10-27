@@ -102,13 +102,13 @@ def detect():
         signal = None
         if zone_bottom_sell <= price <= zone_top_sell:
             entry = price
-            sl = zone_top_sell + 1.2
+            sl = zone_top_sell + 1.8
             tp1 = entry - (sl - entry)
             tp2 = entry - (sl - entry)*2.5
             signal = {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         elif zone_bottom_buy <= price <= zone_top_buy:
             entry = price
-            sl = zone_bottom_buy - 1.2
+            sl = zone_bottom_buy - 1.8
             tp1 = entry + (entry - sl)
             tp2 = entry + (entry - sl)*2.5
             signal = {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
@@ -117,13 +117,11 @@ def detect():
 
         if not signal: return None
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
-        
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
                 return None
         if now - _last_signal_time < 45:
             return None
-
         _last_signal_time = now
         _last_zone = zone_id
         _last_type = signal["type"]
@@ -136,12 +134,26 @@ def format_msg(s):
     if real_now is None:
         real_now = s["price"]
     
-    # Fix 19:44: Si BUY LIMIT 4056.30 au dessus de 4054.85 actuel, on passe en BUY STOP plaçable
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
-    if s["type"]=="BUY" and s["entry"] > real_now + 0.3:
+    # FIX FINAL SELL + BUY 20:43 plaçable + anti-pertes spike
+    if s["type"]=="BUY" and s["entry"] >= real_now - 0.15:
         limit_type = "BUY STOP"
-    if s["type"]=="SELL" and s["entry"] < real_now - 0.3:
+        s["entry"] = real_now + 0.35
+        s["sl"] = s["entry"] - 1.8
+        s["tp1"] = s["entry"] + 1.8
+        s["tp2"] = s["entry"] + 4.5
+    if s["type"]=="SELL" and s["entry"] <= real_now + 0.15:
         limit_type = "SELL STOP"
+        s["entry"] = real_now - 0.35
+        s["sl"] = s["entry"] + 1.8
+        s["tp1"] = s["entry"] - 1.8
+        s["tp2"] = s["entry"] - 4.5
+    else:
+        # Même en LIMIT on élargit SL à 1.8 pour éviter spike comme 4060->4064 à 20:43
+        if s["type"]=="SELL":
+            s["sl"] = s["zone_top"] + 1.8
+        else:
+            s["sl"] = s["zone_bottom"] - 1.8
 
     emoji="🔴" if s["type"]=="SELL" else "🟢"
     return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
