@@ -1,4 +1,4 @@
-import 【entity-yfinance¦canonical_name=Binance】 as yf, os, requests
+import yfinance as yf, os, requests
 from datetime import datetime, timedelta
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
@@ -12,36 +12,25 @@ def send_telegram(msg):
     except: pass
 
 def get_real_spot():
-    for url in ["https://api.gold-api.com/price/XAU", "https://api.metals.live/v1/spot"]:
-        try:
-            r = requests.get(url, timeout=5, headers={"User-Agent":"Mozilla/5.0"})
-            data = r.json()
-            if isinstance(data, dict) and "price" in data:
-                p = float(data["price"])
-                if p > 1000: return p
-            if isinstance(data, list):
-                for item in data:
-                    if item.get("metal")=="XAU":
-                        return float(item.get("price",0))
-        except: continue
     try:
-        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
-        return float(r.json()["price"])
-    except: return None
-
-def get_candles_binance():
-    try:
-        url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=100"
-        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://api.gold-api.com/price/XAU", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
         data = r.json()
-        if not isinstance(data, list): return []
-        return [{"open":float(k[1]), "high":float(k[2]), "low":float(k[3]), "close":float(k[4])} for k in data]
-    except: return []
+        p = float(data.get("price",0))
+        if p > 1000: return p
+    except: pass
+    try:
+        r = requests.get("https://api.metals.live/v1/spot", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
+        data = r.json()
+        for item in data:
+            if item.get("metal")=="XAU":
+                return float(item.get("price",0))
+    except: pass
+    return None
 
 def get_candles_yf():
-    for symbol in ["XAUUSD=X", "GC=F"]:
+    for sym in ["XAUUSD=X", "GC=F"]:
         try:
-            df = yf.download(symbol, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
+            df = yf.download(sym, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
             if df is None or df.empty or len(df) < 10: continue
             df = df.reset_index()
             return [{"open":float(r["Open"]), "high":float(r["High"]), "low":float(r["Low"]), "close":float(r["Close"])} for _, r in df.iterrows()]
@@ -49,13 +38,8 @@ def get_candles_yf():
     return []
 
 def get_candles():
-    # 1. Binance
-    c = get_candles_binance()
-    if len(c) >= 10: return c
-    # 2. yfinance
     c = get_candles_yf()
     if len(c) >= 10: return c
-    # 3. Si tout est vide à 08:57 comme ton screen, on crée une fausse bougie avec le vrai spot 4004.99 pour ne plus jamais avoir vide
     real = get_real_spot()
     if real:
         return [{"open":real, "high":real+1, "low":real-1, "close":real} for _ in range(20)]
