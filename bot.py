@@ -14,20 +14,12 @@ def send_telegram(msg):
 def get_real_spot():
     try:
         r = requests.get("https://api.gold-api.com/price/XAU", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
-        data = r.json()
-        p = float(data.get("price",0))
+        p = float(r.json().get("price",0))
         if p > 1000: return p
-    except: pass
-    try:
-        r = requests.get("https://api.metals.live/v1/spot", timeout=5, headers={"User-Agent":"Mozilla/5.0"})
-        data = r.json()
-        for item in data:
-            if item.get("metal")=="XAU":
-                return float(item.get("price",0))
     except: pass
     return None
 
-def get_candles_yf():
+def get_candles():
     for sym in ["XAUUSD=X", "GC=F"]:
         try:
             df = yf.download(sym, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
@@ -35,11 +27,6 @@ def get_candles_yf():
             df = df.reset_index()
             return [{"open":float(r["Open"]), "high":float(r["High"]), "low":float(r["Low"]), "close":float(r["Close"])} for _, r in df.iterrows()]
         except: continue
-    return []
-
-def get_candles():
-    c = get_candles_yf()
-    if len(c) >= 10: return c
     real = get_real_spot()
     if real:
         return [{"open":real, "high":real+1, "low":real-1, "close":real} for _ in range(20)]
@@ -111,22 +98,6 @@ def format_msg(s):
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
     emoji="🔴" if s["type"]=="SELL" else "🟢"
     if s["signal"]=="BREAK":
-        return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
-
-*Break (Vrai Spot):* {s['price']:.2f}
-*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
-*Entry ({limit_type}):* {s['entry']:.2f}
-*SL:* {s['sl']:.2f}
-*TP1:* {s['tp1']:.2f}
-*TP2:* {s['tp2']:.2f}
-*Valide:* {expire}"""
+        return f"{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*\n\n*Break (Vrai Spot):* {s['price']:.2f}\n*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}\n*Entry:* {s['entry']:.2f}\n*SL:* {s['sl']:.2f}\n*TP1:* {s['tp1']:.2f}\n*TP2:* {s['tp2']:.2f}\n*Valide:* {expire}"
     else:
-        return f"""🎯 *ENTRY - GOLD {s['type']} - {limit_type}*
-
-*Prix Réel Spot:* {s['price']:.2f}
-*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
-*Entry:* {s['entry']:.2f}
-*SL:* {s['sl']:.2f}
-*TP1:* {s['tp1']:.2f}
-*TP2:* {s['tp2']:.2f}
-*Valide:* {expire}"""
+        return f"🎯 *ENTRY - GOLD {s['type']} - {limit_type}*\n\n*Prix Spot:* {s['price']:.2f}\n*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}\n*Entry:* {s['entry']:.2f}\n*SL:* {s['sl']:.2f}\n*TP1:* {s['tp1']:.2f}\n*TP2:* {s['tp2']:.2f}\n*Valide:* {expire}"
