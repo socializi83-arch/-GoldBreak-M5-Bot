@@ -11,39 +11,42 @@ def send_telegram(msg):
         requests.post(url, json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=10)
     except: pass
 
-def get_candles_yfinance():
-    for symbol in ["XAUUSD=X", "GC=F"]:
-        try:
-            df = yf.download(symbol, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
-            if df is None or df.empty or len(df) < 20: continue
-            df = df.reset_index()
-            return [{"open":float(r["Open"]), "high":float(r["High"]), "low":float(r["Low"]), "close":float(r["Close"])} for _, r in df.iterrows()]
-        except: continue
-    return []
+def get_real_price():
+    try:
+        # Vrai prix temps réel Binance, pas photo
+        r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=PAXGUSDT", timeout=5)
+        return float(r.json()["price"])
+    except: return None
 
 def get_candles_binance():
     try:
         url = "https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=5m&limit=100"
         r = requests.get(url, timeout=10)
         data = r.json()
-        if not isinstance(data, list) or len(data) < 20: return []
-        candles = []
-        for k in data:
-            candles.append({"open":float(k[1]), "high":float(k[2]), "low":float(k[3]), "close":float(k[4])})
-        return candles
+        if not isinstance(data, list): return []
+        return [{"open":float(k[1]), "high":float(k[2]), "low":float(k[3]), "close":float(k[4])} for k in data]
     except: return []
 
-def get_candles():
-    c = get_candles_yfinance()
-    if len(c) >= 20: return c
-    c = get_candles_binance()
-    if len(c) >= 20: return c
+def get_candles_yfinance():
+    for symbol in ["XAUUSD=X", "GC=F"]:
+        try:
+            df = yf.download(symbol, period="2d", interval="5m", auto_adjust=True, progress=False, threads=False)
+            if df is None or df.empty or len(df) < 10: continue
+            df = df.reset_index()
+            return [{"open":float(r["Open"]), "high":float(r["High"]), "low":float(r["Low"]), "close":float(r["Close"])} for _, r in df.iterrows()]
+        except: continue
     return []
+
+def get_candles():
+    # Priorité Binance temps réel
+    c = get_candles_binance()
+    if len(c) >= 10: return c
+    c = get_candles_yfinance()
+    return c
 
 def find_swings(candles):
     highs, lows = [], []
     try:
-        # 1 bougie = comme FibAlgo temps réel, plus de décalage 14$ comme à 07:46
         for i in range(1, len(candles)-1):
             h = candles[i]["high"]
             l = candles[i]["low"]
@@ -57,58 +60,57 @@ def find_swings(candles):
 def detect():
     try:
         candles = get_candles()
-        if len(candles) < 20: return None
+        if len(candles) < 10: return None
         highs, lows = find_swings(candles)
         if not highs or not lows: return None
         
         last = candles[-1]
         prev = candles[-2]
-        
-        # On check les 2 côtés en même temps comme FibAlgo qui montre Sell Zone 4010 et Buy Zone 4002 à 07:46
-        # 1. SELL
-        last_high_idx, last_high = highs[-1]
-        last_low_idx, last_low = lows[-1]
-        swing_high = last_high
-        swing_low = candles[last_low_idx]["low"]
+        real_price = get_real_price() or last["close"]
+
+        # Check sur 10 dernières bougies = temps réel, pas 20
+        recent_lows = [l for l in lows if l[0] >= len(candles)-10]
+        recent_highs = [h for h in highs if h[0] >= len(candles)-10]
+        if not recent_lows or not recent_highs: return None
+
+        swing_low = min([l[1] for l in recent_lows])
+        swing_high = max([candles[h[0]]["high"] for h in recent_highs])
         diff = swing_high - swing_low
-        if diff > 0:
-            zone_bottom = swing_low + diff*0.618
-            zone_top = swing_low + diff*0.786
-            if last["close"] < swing_low:
-                entry = (zone_top+zone_bottom)/2
-                sl = zone_top + 1.0
-                tp1 = entry - (sl - entry)
-                tp2 = entry - (sl - entry)*4
-                return {"type":"SELL","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-            if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
-                entry = last["close"]
-                sl = zone_top + 1.0
-                tp1 = entry - (sl - entry)
-                tp2 = entry - (sl - entry)*4
-                return {"type":"SELL","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        
-        # 2. BUY - ton Buy Zone 4002 à 07:46 avec prix 4000.030
-        recent_lows = [l for l in lows if l[0] >= len(candles)-20]
-        recent_highs = [h for h in highs if h[0] >= len(candles)-20]
-        if recent_lows and recent_highs:
-            swing_low2 = min([l[1] for l in recent_lows])
-            swing_high2 = max([candles[h[0]]["high"] for h in recent_highs])
-            diff2 = swing_high2 - swing_low2
-            if diff2 > 0:
-                zone_bottom2 = swing_high2 - diff2*0.786
-                zone_top2 = swing_high2 - diff2*0.618
-                if last["close"] > swing_high2:
-                    entry = (zone_top2+zone_bottom2)/2
-                    sl = zone_bottom2 - 1.0
-                    tp1 = entry + (entry - sl)
-                    tp2 = entry + (entry - sl)*4
-                    return {"type":"BUY","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom2,"zone_top":zone_top2,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-                if zone_bottom2 <= last["close"] <= zone_top2 and not (zone_bottom2 <= prev["close"] <= zone_top2):
-                    entry = last["close"]
-                    sl = zone_bottom2 - 1.0
-                    tp1 = entry + (entry - sl)
-                    tp2 = entry + (entry - sl)*4
-                    return {"type":"BUY","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom2,"zone_top":zone_top2,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        if diff <= 0: return None
+
+        # Zone calculée sur vrai prix live
+        zone_bottom_sell = swing_low + diff*0.618
+        zone_top_sell = swing_low + diff*0.786
+        zone_bottom_buy = swing_high - diff*0.786
+        zone_top_buy = swing_high - diff*0.618
+
+        # SELL BREAK avec vrai prix
+        if real_price < swing_low:
+            entry = (zone_top_sell+zone_bottom_sell)/2
+            sl = zone_top_sell + 1.0
+            tp1 = entry - (sl - entry)
+            tp2 = entry - (sl - entry)*4
+            return {"type":"SELL","signal":"BREAK","price":real_price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        if zone_bottom_sell <= real_price <= zone_top_sell and not (zone_bottom_sell <= prev["close"] <= zone_top_sell):
+            entry = real_price
+            sl = zone_top_sell + 1.0
+            tp1 = entry - (sl - entry)
+            tp2 = entry - (sl - entry)*4
+            return {"type":"SELL","signal":"ENTRY","price":real_price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+
+        # BUY BREAK avec vrai prix - comme ton 4000.030 à 07:46
+        if real_price > swing_high:
+            entry = (zone_top_buy+zone_bottom_buy)/2
+            sl = zone_bottom_buy - 1.0
+            tp1 = entry + (entry - sl)
+            tp2 = entry + (entry - sl)*4
+            return {"type":"BUY","signal":"BREAK","price":real_price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        if zone_bottom_buy <= real_price <= zone_top_buy and not (zone_bottom_buy <= prev["close"] <= zone_top_buy):
+            entry = real_price
+            sl = zone_bottom_buy - 1.0
+            tp1 = entry + (entry - sl)
+            tp2 = entry + (entry - sl)*4
+            return {"type":"BUY","signal":"ENTRY","price":real_price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
                 
     except: return None
     return None
@@ -120,17 +122,17 @@ def format_msg(s):
     if s["signal"]=="BREAK":
         return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
 
-*Break:* {s['price']:.2f}
+*Break (Prix Réel):* {s['price']:.2f}
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry ({limit_type}):* {s['entry']:.2f}
 *SL:* {s['sl']:.2f}
-*TP1 (1:1):* {s['tp1']:.2f}
-*TP2 (1:4):* {s['tp2']:.2f}
+*TP1:* {s['tp1']:.2f}
+*TP2:* {s['tp2']:.2f}
 *Valide:* {expire}"""
     else:
         return f"""🎯 *ENTRY - GOLD {s['type']} - {limit_type}*
 
-*Prix:* {s['price']:.2f}
+*Prix Réel:* {s['price']:.2f}
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
 *SL:* {s['sl']:.2f}
