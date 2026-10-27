@@ -22,14 +22,10 @@ def test():
 def debug():
     try:
         import bot
-        candles = bot.get_candles() if hasattr(bot, 'get_candles') else []
-        if not candles:
-            return "DEBUG: get_candles() vide"
+        candles = bot.get_candles()
         highs, lows = bot.find_swings(candles)
-        last = candles[-1]
-        real = bot.get_real_spot() if hasattr(bot, 'get_real_spot') else None
-        real_txt = f" real_spot={real:.2f}" if real else ""
-        return f"DEBUG: candles={len(candles)} last={last['close']:.2f}{real_txt} highs={len(highs)} lows={len(lows)} OK"
+        real = bot.get_real_spot()
+        return f"DEBUG: candles={len(candles)} last={candles[-1]['close']:.2f} real_spot={real:.2f} highs={len(highs)} lows={len(lows)} OK"
     except Exception as e:
         return f"DEBUG ERREUR: {e}<br>{traceback.format_exc()}", 500
 
