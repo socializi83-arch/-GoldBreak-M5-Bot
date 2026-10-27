@@ -134,25 +134,19 @@ def format_msg(s):
     if real_now is None:
         real_now = s["price"]
     
-    limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
-    # FIX FINAL 20:59: 0.80$ de distance pour être plaçable, plus Valide futur
-    if s["type"]=="BUY" and s["entry"] >= real_now - 0.15:
+    # FIX FINAL 21:44: 1.50$ distance garantie plaçable pour tous les prochains
+    if s["type"]=="BUY":
         limit_type = "BUY STOP"
-        s["entry"] = real_now + 0.80
+        s["entry"] = real_now + 1.50
         s["sl"] = s["entry"] - 1.8
         s["tp1"] = s["entry"] + 1.8
         s["tp2"] = s["entry"] + 4.5
-    if s["type"]=="SELL" and s["entry"] <= real_now + 0.15:
+    else:
         limit_type = "SELL STOP"
-        s["entry"] = real_now - 0.80
+        s["entry"] = real_now - 1.50
         s["sl"] = s["entry"] + 1.8
         s["tp1"] = s["entry"] - 1.8
         s["tp2"] = s["entry"] - 4.5
-    else:
-        if s["type"]=="SELL":
-            s["sl"] = s["zone_top"] + 1.8
-        else:
-            s["sl"] = s["zone_bottom"] - 1.8
 
     emoji="🔴" if s["type"]=="SELL" else "🟢"
     return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
