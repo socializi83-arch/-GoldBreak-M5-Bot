@@ -72,15 +72,15 @@ def detect():
             zone_top = swing_low + diff*0.786
             if last["close"] < swing_low:
                 entry = (zone_top+zone_bottom)/2
-                sl = zone_top+0.8
-                tp1 = entry-(sl-entry)
-                tp2 = entry-(sl-entry)*4
+                sl = zone_top + 1.0
+                tp1 = entry - (sl - entry)
+                tp2 = entry - (sl - entry)*4
                 return {"type":"SELL","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
             if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
                 entry = last["close"]
-                sl = zone_top+0.8
-                tp1 = entry-(sl-entry)
-                tp2 = entry-(sl-entry)*4
+                sl = zone_top + 1.0
+                tp1 = entry - (sl - entry)
+                tp2 = entry - (sl - entry)*4
                 return {"type":"SELL","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         else:
             swing_low = last_low
@@ -91,28 +91,36 @@ def detect():
             zone_top = swing_high - diff*0.618
             if last["close"] > swing_high:
                 entry = (zone_top+zone_bottom)/2
-                sl = zone_bottom-0.8
-                tp1 = entry+(entry-sl)
-                tp2 = entry+(entry-sl)*4
+                sl = zone_bottom - 1.0
+                tp1 = entry + (entry - sl)
+                tp2 = entry + (entry - sl)*4
                 return {"type":"BUY","signal":"BREAK","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
             if zone_bottom <= last["close"] <= zone_top and not (zone_bottom <= prev["close"] <= zone_top):
                 entry = last["close"]
-                sl = zone_bottom-0.8
-                tp1 = entry+(entry-sl)
-                tp2 = entry+(entry-sl)*4
+                sl = zone_bottom - 1.0
+                tp1 = entry + (entry - sl)
+                tp2 = entry + (entry - sl)*4
                 return {"type":"BUY","signal":"ENTRY","price":last["close"],"zone_bottom":zone_bottom,"zone_top":zone_top,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
     except: return None
     return None
 
 def format_msg(s):
-    emoji="🔴" if s["type"]=="SELL" else "🟢"
     if s["signal"]=="BREAK":
+        emoji="🔴" if s["type"]=="SELL" else "🟢"
         return f"""{emoji} *GOLD {s['type']} - {s['signal']}*
 
 *Break:* {s['price']:.2f}
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
-*Entry:* {s['entry']:.2f}"""
+*Entry:* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1 (1:1):* {s['tp1']:.2f}
+*TP2 (1:4):* {s['tp2']:.2f}"""
     else:
         return f"""🎯 *ENTRY - GOLD {s['type']}*
+
 *Prix:* {s['price']:.2f}
-*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}"""
+*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Entry:* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1 (1:1):* {s['tp1']:.2f}
+*TP2 (1:4):* {s['tp2']:.2f}"""
