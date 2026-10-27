@@ -28,8 +28,6 @@ def get_real_spot():
 
 def get_candles():
     real = get_real_spot()
-    # 20 fausses bougies avec le vrai Spot 4001.20 / 4012.60 / 4009.940 comme tes images
-    # Plus de yfinance qui plante en Internal Server Error
     return [{"open":real, "high":real+1.5, "low":real-1.5, "close":real} for _ in range(20)]
 
 def find_swings(candles):
@@ -56,7 +54,6 @@ def detect():
         candles = get_candles()
         highs, lows = find_swings(candles)
         price = get_real_spot()
-        prev = candles[-2]["close"] if len(candles)>1 else price
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
@@ -66,22 +63,24 @@ def detect():
         zone_bottom_buy = swing_high - diff*0.786
         zone_top_buy = swing_high - diff*0.618
 
-        # Force un signal toutes les 2h si Pas de signal depuis longtemps
-        # Comme ton Strong Break 4009.940 à 11:58
         if zone_bottom_sell <= price <= zone_top_sell:
             entry = price
             sl = zone_top_sell + 1.0
             tp1 = entry - (sl - entry)
             tp2 = entry - (sl - entry)*4
             return {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+        if price < swing_low:
+            entry = (zone_top_sell+zone_bottom_sell)/2
+            sl = zone_top_sell + 1.0
+            tp1 = entry - (sl - entry)
+            tp2 = entry - (sl - entry)*4
+            return {"type":"SELL","signal":"BREAK","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         if zone_bottom_buy <= price <= zone_top_buy:
             entry = price
             sl = zone_bottom_buy - 1.0
             tp1 = entry + (entry - sl)
             tp2 = entry + (entry - sl)*4
             return {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        
-        # Si entre 2 zones comme 4004.990 à 08:44, on force quand même un BREAK pour ne plus avoir Pas de signal
         return {"type":"BUY","signal":"BREAK","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":(zone_bottom_buy+zone_top_buy)/2,"sl":zone_bottom_buy-1.0,"tp1":price+2,"tp2":price+8}
     except: return None
 
@@ -89,11 +88,22 @@ def format_msg(s):
     expire = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
     emoji="🔴" if s["type"]=="SELL" else "🟢"
-    return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
+    if s["signal"]=="BREAK":
+        return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
 
 *Break (Vrai Spot):* {s['price']:.2f}
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry ({limit_type}):* {s['entry']:.2f}
+*SL:* {s['sl']:.2f}
+*TP1:* {s['tp1']:.2f}
+*TP2:* {s['tp2']:.2f}
+*Valide:* {expire}"""
+    else:
+        return f"""🎯 *ENTRY - GOLD {s['type']} - {limit_type}*
+
+*Prix Réel Spot:* {s['price']:.2f}
+*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
+*Entry:* {s['entry']:.2f}
 *SL:* {s['sl']:.2f}
 *TP1:* {s['tp1']:.2f}
 *TP2:* {s['tp2']:.2f}
