@@ -1,8 +1,11 @@
-import os, requests
+import os, requests, time
 from datetime import datetime, timedelta
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
+
+_last_signal_time = 0
+_last_zone = ""
 
 def send_telegram(msg):
     try:
@@ -50,7 +53,13 @@ def find_swings(candles):
     return highs, lows
 
 def detect():
+    global _last_signal_time, _last_zone
     try:
+        # ANTI-SPAM: 1 signal max toutes les 15 minutes
+        now = time.time()
+        if now - _last_signal_time < 900:  # 900 sec = 15 min
+            return None
+
         candles = get_candles()
         highs, lows = find_swings(candles)
         price = get_real_spot()
@@ -63,43 +72,37 @@ def detect():
         zone_bottom_buy = swing_high - diff*0.786
         zone_top_buy = swing_high - diff*0.618
 
+        # ANTI-SPAM: ne pas renvoyer la même zone
+        zone_id = f"{zone_bottom_buy:.0f}-{zone_top_buy:.0f}"
+        if zone_id == _last_zone:
+            return None
+
         if zone_bottom_sell <= price <= zone_top_sell:
             entry = price
-            sl = zone_top_sell + 1.0
+            sl = zone_top_sell + 1.2
             tp1 = entry - (sl - entry)
-            tp2 = entry - (sl - entry)*4
+            tp2 = entry - (sl - entry)*2.5
+            _last_signal_time = now
+            _last_zone = zone_id
             return {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        if price < swing_low:
-            entry = (zone_top_sell+zone_bottom_sell)/2
-            sl = zone_top_sell + 1.0
-            tp1 = entry - (sl - entry)
-            tp2 = entry - (sl - entry)*4
-            return {"type":"SELL","signal":"BREAK","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         if zone_bottom_buy <= price <= zone_top_buy:
             entry = price
-            sl = zone_bottom_buy - 1.0
+            sl = zone_bottom_buy - 1.2
             tp1 = entry + (entry - sl)
-            tp2 = entry + (entry - sl)*4
+            tp2 = entry + (entry - sl)*2.5
+            _last_signal_time = now
+            _last_zone = zone_id
             return {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        return {"type":"BUY","signal":"BREAK","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":(zone_bottom_buy+zone_top_buy)/2,"sl":zone_bottom_buy-1.0,"tp1":price+2,"tp2":price+8}
+
+        # Pas de BREAK forcé qui spam comme à 17:36-17:53
+        return None
     except: return None
 
 def format_msg(s):
     expire = (datetime.now() + timedelta(minutes=30)).strftime("%H:%M")
     limit_type = "SELL LIMIT" if s["type"]=="SELL" else "BUY LIMIT"
     emoji="🔴" if s["type"]=="SELL" else "🟢"
-    if s["signal"]=="BREAK":
-        return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
-
-*Break (Vrai Spot):* {s['price']:.2f}
-*Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
-*Entry ({limit_type}):* {s['entry']:.2f}
-*SL:* {s['sl']:.2f}
-*TP1:* {s['tp1']:.2f}
-*TP2:* {s['tp2']:.2f}
-*Valide:* {expire}"""
-    else:
-        return f"""🎯 *ENTRY - GOLD {s['type']} - {limit_type}*
+    return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
 
 *Prix Réel Spot:* {s['price']:.2f}
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
