@@ -8,6 +8,7 @@ except:
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
 
+BUY_ONLY = False  # False = filtre vrais BUY + vrais SELL, ne loupe pas les bons SELL
 _last_signal_time = 0
 _last_zone = ""
 _last_type = ""
@@ -84,15 +85,20 @@ def detect():
     global _last_signal_time, _last_zone, _last_type
     try:
         candles = get_candles_real()
-        if len(candles) < 10: return None
+        if len(candles) < 20: return None
         highs, lows = find_swings(candles)
         real_spot = get_real_spot()
         if not real_spot: return None
         price = real_spot
+
+        closes = [c["close"] for c in candles[-20:]]
+        sma20 = sum(closes)/len(closes)
+
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
-        if diff < 3: return None
+        if diff < 4.5: return None  # Filtre bruit: évite zones 4062.45-4062.96 à 20:58 qui t'ont fait grisé
+
         zone_bottom_sell = swing_low + diff*0.618
         zone_top_sell = swing_low + diff*0.786
         zone_bottom_buy = swing_high - diff*0.786
@@ -100,27 +106,41 @@ def detect():
 
         now = time.time()
         signal = None
-        if zone_bottom_sell <= price <= zone_top_sell:
+
+        # FILTRE VRAI BUY: comme ton Buy Zone 4057.115 à 18:59 R:R 1:3
+        if zone_bottom_buy <= price <= zone_top_buy:
+            if price < sma20 - 0.5:  # Prix sous SMA20 = pas vrai BUY, évite achat dans chute 4054.705 à 19:43
+                return None
+            if price > zone_bottom_buy + diff*0.10:  # Prix dans haut de Buy Zone = mauvais R:R comme 4064.00 à 20:42
+                return None
             entry = price
-            sl = zone_top_sell + 1.8
-            tp1 = entry - (sl - entry)
-            tp2 = entry - (sl - entry)*2.5
-            signal = {"type":"SELL","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        elif zone_bottom_buy <= price <= zone_top_buy:
-            entry = price
-            sl = zone_bottom_buy - 1.8
+            sl = zone_bottom_buy - 2.2
             tp1 = entry + (entry - sl)
             tp2 = entry + (entry - sl)*2.5
-            signal = {"type":"BUY","signal":"ENTRY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+            signal = {"type":"BUY","signal":"VRAI BUY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+
+        # FILTRE VRAI SELL: ne loupe pas bon SELL comme Sell Zone 4057.500 à 19:57
+        elif zone_bottom_sell <= price <= zone_top_sell:
+            if BUY_ONLY: return None
+            if price > sma20 + 0.5:  # Prix au dessus SMA20 = pas vrai SELL, évite Sell dans spike haussier 4060->4064 à 20:43 qui t'a fait -0.55
+                return None
+            if price < zone_top_sell - diff*0.10:  # Prix dans bas de Sell Zone = mauvais R:R
+                return None
+            entry = price
+            sl = zone_top_sell + 2.2  # SL large 2.2$ anti-spike
+            tp1 = entry - (sl - entry)
+            tp2 = entry - (sl - entry)*2.5
+            signal = {"type":"SELL","signal":"VRAI SELL","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         else:
             return None
 
         if not signal: return None
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
+        # Anti-spam: bloque même zone 3 min + 60 sec global (évite 15 BUY 17:36-17:53 -56.10)
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
                 return None
-        if now - _last_signal_time < 45:
+        if now - _last_signal_time < 60:
             return None
         _last_signal_time = now
         _last_zone = zone_id
@@ -129,32 +149,32 @@ def detect():
     except: return None
 
 def format_msg(s):
-    expire = (datetime.now() + timedelta(minutes=15)).strftime("%H:%M")
+    expire = (datetime.now() + timedelta(minutes=20)).strftime("%H:%M")
     real_now = get_real_spot()
     if real_now is None:
         real_now = s["price"]
     
-    # FIX FINAL 21:44: 1.50$ distance garantie plaçable pour tous les prochains
     if s["type"]=="BUY":
         limit_type = "BUY STOP"
         s["entry"] = real_now + 1.50
-        s["sl"] = s["entry"] - 1.8
-        s["tp1"] = s["entry"] + 1.8
-        s["tp2"] = s["entry"] + 4.5
+        s["sl"] = s["entry"] - 2.2
+        s["tp1"] = s["entry"] + 2.2
+        s["tp2"] = s["entry"] + 5.5
+        emoji="🟢"
     else:
         limit_type = "SELL STOP"
         s["entry"] = real_now - 1.50
-        s["sl"] = s["entry"] + 1.8
-        s["tp1"] = s["entry"] - 1.8
-        s["tp2"] = s["entry"] - 4.5
+        s["sl"] = s["entry"] + 2.2
+        s["tp1"] = s["entry"] - 2.2
+        s["tp2"] = s["entry"] - 5.5
+        emoji="🔴"
 
-    emoji="🔴" if s["type"]=="SELL" else "🟢"
     return f"""{emoji} *GOLD {s['type']} - {s['signal']} - {limit_type}*
 
 *Prix Réel Spot:* {s['price']:.2f} (actuel {real_now:.2f})
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
-*SL:* {s['sl']:.2f}
+*SL:* {s['sl']:.2f} (large anti-spike)
 *TP1:* {s['tp1']:.2f}
 *TP2:* {s['tp2']:.2f}
 *Valide:* {expire}"""
