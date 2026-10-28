@@ -81,6 +81,9 @@ def find_swings(candles):
     except: pass
     return highs, lows
 
+def intersects(candle, zb, zt):
+    return candle["low"] <= zt and candle["high"] >= zb
+
 def detect():
     global _last_signal_time, _last_zone, _last_type
     try:
@@ -93,14 +96,13 @@ def detect():
 
         closes = [c["close"] for c in candles[-20:]]
         sma20 = sum(closes)/len(closes)
-        # SMA pente pour confirmation tendance
         closes_prev = [c["close"] for c in candles[-25:-5]]
         sma20_prev = sum(closes_prev)/len(closes_prev)
 
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
-        if diff < 3.0: return None  # 40% rentrée: 3.0$ mini
+        if diff < 3.0: return None  # TRAVERSÉE: 3.0$ mini pour éviter bruit 4062.45-4062.96 à 20:58
 
         zone_bottom_sell = swing_low + diff*0.618
         zone_top_sell = swing_low + diff*0.786
@@ -108,42 +110,40 @@ def detect():
         zone_top_buy = swing_high - diff*0.618
 
         now = time.time()
-        signal = None
         last = candles[-1]
+        prev = candles[-2]
+        signal = None
 
-        # VRAI BUY 40% + CONFIRMATIONS
-        if zone_bottom_buy <= price <= zone_top_buy:
+        # TRAVERSÉE BUY ZONE comme 10:21 et 13:32
+        if intersects(last, zone_bottom_buy, zone_top_buy) and not intersects(prev, zone_bottom_buy, zone_top_buy):
             if price < sma20 - 1.0: return None
-            if price > zone_bottom_buy + diff*0.40: return None
-            # CONFIRMATION 1: bougie verte comme Buy Zone 4057.115 R:R 1:3 à 18:59
+            # Confirmation bougie verte + SMA qui monte pour être sûr comme Buy Zone 4057.115 R:R 1:3 à 18:59
             if last["close"] <= last["open"]: return None
-            # CONFIRMATION 2: SMA20 qui monte (évite BUY dans chute comme 21:01 -98.74)
             if sma20 <= sma20_prev: return None
             entry = price
-            sl = zone_bottom_buy - 3.0  # SL 3.0$ anti-perte comme 21:01 4042.80->4039.06
+            sl = zone_bottom_buy - 3.0
             tp1 = entry + (entry - sl)
             tp2 = entry + (entry - sl)*2.5
-            signal = {"type":"BUY","signal":"VRAI BUY CONFIRMÉ","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+            signal = {"type":"BUY","signal":"VRAI BUY TRAVERSÉE","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
 
-        # VRAI SELL 40% + CONFIRMATIONS
-        elif zone_bottom_sell <= price <= zone_top_sell:
+        # TRAVERSÉE SELL ZONE comme 20:05
+        elif intersects(last, zone_bottom_sell, zone_top_sell) and not intersects(prev, zone_bottom_sell, zone_top_sell):
             if BUY_ONLY: return None
             if price > sma20 + 1.0: return None
-            if price < zone_top_sell - diff*0.40: return None
-            # CONFIRMATION 1: bougie rouge comme ta rouge descendante à 18:32 Sell Zone 4050
+            # Confirmation bougie rouge + SMA qui descend comme 18:32 Sell Zone 4050 rouge descendante
             if last["close"] >= last["open"]: return None
-            # CONFIRMATION 2: SMA20 qui descend (évite SELL dans spike 4060->4064 à 20:43 -0.55)
             if sma20 >= sma20_prev: return None
             entry = price
             sl = zone_top_sell + 3.0
             tp1 = entry - (sl - entry)
             tp2 = entry - (sl - entry)*2.5
-            signal = {"type":"SELL","signal":"VRAI SELL CONFIRMÉ","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+            signal = {"type":"SELL","signal":"VRAI SELL TRAVERSÉE","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
         else:
             return None
 
         if not signal: return None
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
+        # Anti-spam 3 min même zone + 60 sec global évite 15 BUY 17:36-17:53 -56.10
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
                 return None
@@ -164,7 +164,7 @@ def format_msg(s):
     if s["type"]=="BUY":
         limit_type = "BUY STOP"
         s["entry"] = real_now + 1.50
-        s["sl"] = s["entry"] - 3.0  # SL 3.0$ anti-perte
+        s["sl"] = s["entry"] - 3.0
         s["tp1"] = s["entry"] + 3.0
         s["tp2"] = s["entry"] + 7.5
         emoji="🟢"
@@ -181,7 +181,7 @@ def format_msg(s):
 *Prix Réel Spot:* {s['price']:.2f} (actuel {real_now:.2f})
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
-*SL:* {s['sl']:.2f} (large 3.0$ confirmé)
+*SL:* {s['sl']:.2f} (large 3.0$ traversée)
 *TP1:* {s['tp1']:.2f}
 *TP2:* {s['tp2']:.2f}
 *Valide:* {expire}"""
