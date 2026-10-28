@@ -8,7 +8,7 @@ except:
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 CHAT_ID = os.getenv("CHAT_ID", "") or os.getenv("TELEGRAM_CHAT_ID", "")
 
-BUY_ONLY = False  # False = filtre vrais BUY + vrais SELL, ne loupe pas les bons SELL
+BUY_ONLY = False
 _last_signal_time = 0
 _last_zone = ""
 _last_type = ""
@@ -97,7 +97,8 @@ def detect():
         swing_low = min([l[1] for l in lows])
         swing_high = max([h[1] for h in highs])
         diff = swing_high - swing_low
-        if diff < 4.5: return None  # Filtre bruit: évite zones 4062.45-4062.96 à 20:58 qui t'ont fait grisé
+        # ASSOUPLI: 3.5$ au lieu de 4.5$ pour capter zones comme 4049-4051.5 à 10:21
+        if diff < 3.5: return None
 
         zone_bottom_sell = swing_low + diff*0.618
         zone_top_sell = swing_low + diff*0.786
@@ -107,11 +108,12 @@ def detect():
         now = time.time()
         signal = None
 
-        # FILTRE VRAI BUY: comme ton Buy Zone 4057.115 à 18:59 R:R 1:3
+        # VRAI BUY ASSOUPLI 30% pour presque en bas
         if zone_bottom_buy <= price <= zone_top_buy:
-            if price < sma20 - 0.5:  # Prix sous SMA20 = pas vrai BUY, évite achat dans chute 4054.705 à 19:43
+            if price < sma20 - 1.0:  # Assoupli -1.0 au lieu de -0.5
                 return None
-            if price > zone_bottom_buy + diff*0.10:  # Prix dans haut de Buy Zone = mauvais R:R comme 4064.00 à 20:42
+            # ASSOUPLI: 30% bas de zone au lieu de 10% = capte presque en bas comme 10:21
+            if price > zone_bottom_buy + diff*0.30:
                 return None
             entry = price
             sl = zone_bottom_buy - 2.2
@@ -119,15 +121,14 @@ def detect():
             tp2 = entry + (entry - sl)*2.5
             signal = {"type":"BUY","signal":"VRAI BUY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
 
-        # FILTRE VRAI SELL: ne loupe pas bon SELL comme Sell Zone 4057.500 à 19:57
         elif zone_bottom_sell <= price <= zone_top_sell:
             if BUY_ONLY: return None
-            if price > sma20 + 0.5:  # Prix au dessus SMA20 = pas vrai SELL, évite Sell dans spike haussier 4060->4064 à 20:43 qui t'a fait -0.55
+            if price > sma20 + 1.0:
                 return None
-            if price < zone_top_sell - diff*0.10:  # Prix dans bas de Sell Zone = mauvais R:R
+            if price < zone_top_sell - diff*0.30:
                 return None
             entry = price
-            sl = zone_top_sell + 2.2  # SL large 2.2$ anti-spike
+            sl = zone_top_sell + 2.2
             tp1 = entry - (sl - entry)
             tp2 = entry - (sl - entry)*2.5
             signal = {"type":"SELL","signal":"VRAI SELL","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
@@ -136,7 +137,6 @@ def detect():
 
         if not signal: return None
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
-        # Anti-spam: bloque même zone 3 min + 60 sec global (évite 15 BUY 17:36-17:53 -56.10)
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
                 return None
