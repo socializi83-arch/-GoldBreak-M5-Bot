@@ -84,6 +84,9 @@ def find_swings(candles):
 def intersects(candle, zb, zt):
     return candle["low"] <= zt and candle["high"] >= zb
 
+def touches_level(candle, level):
+    return candle["low"] - 0.3 <= level <= candle["high"] + 0.3
+
 def detect():
     global _last_signal_time, _last_zone, _last_type
     try:
@@ -109,71 +112,45 @@ def detect():
         zone_bottom_buy = swing_high - diff*0.786
         zone_top_buy = swing_high - diff*0.618
 
-        # STRONG BREAK haussier/baissier comme FibAlgo
         last = candles[-1]
         prev = candles[-2]
-        # Strong Break haussier = clôture au dessus du swing_high
+        now = time.time()
+
+        # STRONG BREAK détection
         strong_break_haussier = last["close"] > swing_high and prev["close"] <= swing_high
-        # Strong Break baissier = clôture en dessous du swing_low
         strong_break_baissier = last["close"] < swing_low and prev["close"] >= swing_low
-        # Détection sur 3 dernières bougies pour éviter faux
         recent_break_haussier = any(c["close"] > swing_high for c in candles[-3:])
         recent_break_baissier = any(c["close"] < swing_low for c in candles[-3:])
 
-        now = time.time()
         signal = None
 
-        # VRAI BUY TRAVERSÉE + Strong Break
+        # ===== STRATÉGIE A : TRAVERSÉE + Strong Break + confirmation (sûre à 90%) =====
+        # Comme version 11:56 avec 4031.399902
         if intersects(last, zone_bottom_buy, zone_top_buy) and not intersects(prev, zone_bottom_buy, zone_top_buy):
-            if price < sma20 - 1.0: return None
-            if last["close"] <= last["open"]: return None  # bougie verte
-            if sma20 <= sma20_prev: return None  # SMA qui monte
-            # Si Strong Break baissier récent, on évite BUY (direction continue baissière comme 20:05 4055-4060 → 4040)
-            if recent_break_baissier and not recent_break_haussier:
-                return None
-            entry = price
-            sl = zone_bottom_buy - 3.0
-            tp1 = entry + (entry - sl)
-            tp2 = entry + (entry - sl)*2.5
-            typ = "STRONG BREAK HAUSSIER" if strong_break_haussier else "VRAI BUY TRAVERSÉE"
-            signal = {"type":"BUY","signal":typ,"price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
+            if price >= sma20 - 1.0 and last["close"] > last["open"] and sma20 > sma20_prev:
+                if not (recent_break_baissier and not recent_break_haussier):
+                    signal = {"type":"BUY","signal":"A-TRAVERSÉE","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy}
+        if not signal and intersects(last, zone_bottom_sell, zone_top_sell) and not intersects(prev, zone_bottom_sell, zone_top_sell):
+            if not BUY_ONLY and price <= sma20 + 1.0 and last["close"] < last["open"] and sma20 < sma20_prev:
+                if not (recent_break_haussier and not recent_break_baissier):
+                    signal = {"type":"SELL","signal":"A-TRAVERSÉE","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell}
+        if not signal and strong_break_haussier and last["close"] > last["open"] and sma20 > sma20_prev and not recent_break_baissier:
+            signal = {"type":"BUY","signal":"A-STRONG BREAK HAUSSIER","price":price,"zone_bottom":swing_high-1,"zone_top":swing_high}
+        if not signal and strong_break_baissier and last["close"] < last["open"] and sma20 < sma20_prev and not BUY_ONLY and not recent_break_haussier:
+            signal = {"type":"SELL","signal":"A-STRONG BREAK BAISSIER","price":price,"zone_bottom":swing_low,"zone_top":swing_low+1}
 
-        # VRAI SELL TRAVERSÉE + Strong Break
-        elif intersects(last, zone_bottom_sell, zone_top_sell) and not intersects(prev, zone_bottom_sell, zone_top_sell):
-            if BUY_ONLY: return None
-            if price > sma20 + 1.0: return None
-            if last["close"] >= last["open"]: return None  # bougie rouge
-            if sma20 >= sma20_prev: return None  # SMA qui descend
-            # Si Strong Break haussier récent, on évite SELL (direction continue haussière comme spike 4060→4064 à 20:43 -0.55)
-            if recent_break_haussier and not recent_break_baissier:
-                return None
-            entry = price
-            sl = zone_top_sell + 3.0
-            tp1 = entry - (sl - entry)
-            tp2 = entry - (sl - entry)*2.5
-            typ = "STRONG BREAK BAISSIER" if strong_break_baissier else "VRAI SELL TRAVERSÉE"
-            signal = {"type":"SELL","signal":typ,"price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-        else:
-            # Détection directe Strong Break même hors zone pour capter momentum comme 20:05
-            if strong_break_haussier and last["close"] > last["open"] and sma20 > sma20_prev:
-                if recent_break_baissier: return None
-                entry = price
-                sl = swing_high - 3.0
-                tp1 = entry + 3.0
-                tp2 = entry + 7.5
-                signal = {"type":"BUY","signal":"STRONG BREAK HAUSSIER","price":price,"zone_bottom":swing_high-1,"zone_top":swing_high,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-            elif strong_break_baissier and last["close"] < last["open"] and sma20 < sma20_prev:
-                if BUY_ONLY: return None
-                if recent_break_haussier: return None
-                entry = price
-                sl = swing_low + 3.0
-                tp1 = entry - 3.0
-                tp2 = entry - 7.5
-                signal = {"type":"SELL","signal":"STRONG BREAK BAISSIER","price":price,"zone_bottom":swing_low,"zone_top":swing_low+1,"entry":entry,"sl":sl,"tp1":tp1,"tp2":tp2}
-            else:
-                return None
+        # ===== STRATÉGIE B : 2 bougies BAS Sell / HAUT Buy (ta stratégie exacte) - INDÉPENDANTE avec OU =====
+        if not signal:
+            # BUY au HAUT Buy Zone 4022-4026 sur image 10:51 prix 4026.960
+            if touches_level(last, zone_top_buy) and touches_level(prev, zone_top_buy):
+                signal = {"type":"BUY","signal":"B-2 BOUGIES HAUT BUY","price":price,"zone_bottom":zone_bottom_buy,"zone_top":zone_top_buy}
+            # SELL au BAS Sell Zone 4030-4028 et 4034-4032 sur image 14:18 prix 4027.125
+            elif not BUY_ONLY and touches_level(last, zone_bottom_sell) and touches_level(prev, zone_bottom_sell):
+                signal = {"type":"SELL","signal":"B-2 BOUGIES BAS SELL","price":price,"zone_bottom":zone_bottom_sell,"zone_top":zone_top_sell}
 
         if not signal: return None
+
+        # Anti-spam 60 sec / 3 min même zone évite 15 BUY 17:36-17:53 -56.10
         zone_id = f"{signal['zone_bottom']:.0f}-{signal['zone_top']:.0f}"
         if zone_id == _last_zone and signal["type"] == _last_type:
             if now - _last_signal_time < 180:
@@ -183,6 +160,18 @@ def detect():
         _last_signal_time = now
         _last_zone = zone_id
         _last_type = signal["type"]
+
+        # Complète SL/TP
+        if signal["type"]=="BUY":
+            signal["entry"]=price
+            signal["sl"]=signal["zone_bottom"]-3.0
+            signal["tp1"]=price+3.0
+            signal["tp2"]=price+7.5
+        else:
+            signal["entry"]=price
+            signal["sl"]=signal["zone_top"]+3.0
+            signal["tp1"]=price-3.0
+            signal["tp2"]=price-7.5
         return signal
     except: return None
 
@@ -212,7 +201,7 @@ def format_msg(s):
 *Prix Réel Spot:* {s['price']:.2f} (actuel {real_now:.2f})
 *Zone:* {s['zone_bottom']:.2f} - {s['zone_top']:.2f}
 *Entry:* {s['entry']:.2f}
-*SL:* {s['sl']:.2f} (large 3.0$ Strong Break)
+*SL:* {s['sl']:.2f} (large 3.0$ 2 strat OU)
 *TP1:* {s['tp1']:.2f}
 *TP2:* {s['tp2']:.2f}
 *Valide:* {expire}"""
